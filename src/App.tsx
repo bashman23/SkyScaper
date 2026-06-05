@@ -7,6 +7,7 @@ import {
   Hand,
   LocateFixed,
   MapPinned,
+  Menu,
   MousePointer2,
   Pentagon,
   Redo2,
@@ -14,12 +15,14 @@ import {
   Search,
   Trash2,
   Undo2,
-  Upload
+  Upload,
+  X
 } from 'lucide-react';
 import type { Feature, FeatureCollection, Geometry } from 'geojson';
 import type { DrawFeatureCollection, MeasurementCollection, MeasurementFeature } from './types';
 import { AdSlot } from './components/AdSlot';
 import { getLegalPageKind, LegalPage } from './components/LegalPages';
+import { MaterialCalculator } from './components/MaterialCalculator';
 import { createMeasuredCollection, formatArea, formatDistance, formatNumber, metersToFeet, squareMetersToAcres, squareMetersToSquareFeet } from './lib/measurements';
 import { downloadTextFile, toCsv, toExportableGeoJson } from './lib/export';
 import { loadProject, saveProject } from './lib/storage';
@@ -67,6 +70,7 @@ function MeasurementApp() {
   const [searchStatus, setSearchStatus] = useState<'idle' | 'loading' | 'error' | 'empty'>('idle');
   const [importStatus, setImportStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [importMessage, setImportMessage] = useState('');
+  const [panelOpen, setPanelOpen] = useState(true);
 
   const pushHistorySnapshot = (collection: MeasurementCollection) => {
     const snapshot = cloneCollection(collection);
@@ -390,9 +394,12 @@ function MeasurementApp() {
         <button className="icon-button danger" onClick={clearAllFeatures} disabled={features.features.length === 0} title="Clear all">
           <Eraser size={20} aria-hidden="true" />
         </button>
+        <button className="icon-button mobile-menu-toggle" onClick={() => setPanelOpen(!panelOpen)} title="Toggle panel">
+          {panelOpen ? <X size={20} aria-hidden="true" /> : <Menu size={20} aria-hidden="true" />}
+        </button>
       </section>
 
-      <aside className="measurement-panel" aria-label="Measurements">
+      <aside className={`measurement-panel ${panelOpen ? 'open' : 'closed'}`} aria-label="Measurements">
         <header className="panel-header">
           <div>
             <p className="eyebrow">Free professional tool</p>
@@ -480,6 +487,8 @@ function MeasurementApp() {
         {importStatus !== 'idle' ? <p className={importStatus === 'error' ? 'import-status error' : 'import-status'}>{importMessage}</p> : null}
 
         <AdSlot />
+
+        <MaterialCalculator areaSqM={totals.areaSqM} lengthM={totals.lengthM} />
 
         <SelectedFeatureEditor feature={selectedFeature} onRename={renameSelectedFeature} />
 

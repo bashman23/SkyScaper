@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Map Measurement
 
 Free satellite measurement web app for estimating building footprints, parking lot areas, perimeters, and distances.
@@ -64,3 +65,7 @@ npm run test:run
 npm run build
 npm audit
 ```
+=======
+# SkyScaper
+Use Satellite Images to Measure Lot/Building/Yard Sizes for projects and calculate project costs. 
+>>>>>>> 089652a1363ecfe7c0efa2bdc610536e9ffefa50
