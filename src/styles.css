@@ -700,6 +700,33 @@ h1 {
   gap: 10px;
 }
 
+.calculator-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.preset-chip {
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  padding: 6px 10px;
+  color: #334155;
+  background: #f8fafc;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.preset-chip:hover {
+  border-color: #0e7490;
+  color: #0f5161;
+}
+
+.preset-chip.active {
+  border-color: #0e7490;
+  color: #0f5161;
+  background: #ecfeff;
+}
+
 .calculator-select {
   display: grid;
   gap: 6px;
@@ -731,6 +758,16 @@ h1 {
   color: #64748b;
   font-size: 0.82rem;
   line-height: 1.35;
+}
+
+.calculator-helper {
+  margin: 0;
+  border: 1px dashed #bae6fd;
+  border-radius: 6px;
+  padding: 7px 9px;
+  color: #0f5161;
+  background: #f0f9ff;
+  font-size: 0.8rem;
 }
 
 .calculator-rate {

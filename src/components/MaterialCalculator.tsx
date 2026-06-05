@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { ChevronDown } from 'lucide-react';
 
-export type MaterialType = 'asphalt' | 'sealcoat' | 'paint' | 'sod' | 'mulch';
+export type MaterialType = 'asphalt' | 'sealcoat' | 'paint' | 'sod' | 'mulch' | 'roofing' | 'fencing';
 
 interface MaterialRate {
   name: string;
@@ -40,12 +40,34 @@ const MATERIAL_RATES: Record<MaterialType, MaterialRate> = {
     unit: 'cu yd',
     pricePerUnit: 45,
     description: 'Wood chip mulch'
+  },
+  roofing: {
+    name: 'Roofing (shingles)',
+    unit: 'sq ft',
+    pricePerUnit: 1.75,
+    description: 'Asphalt shingle roof coverage'
+  },
+  fencing: {
+    name: 'Fencing',
+    unit: 'linear ft',
+    pricePerUnit: 28,
+    description: 'Installed fence per linear foot'
   }
 };
 
 interface MaterialCalculatorProps {
   areaSqM: number;
   lengthM: number;
+}
+
+const QUICK_PRESETS: MaterialType[] = ['roofing', 'fencing'];
+
+function isLinearMaterial(type: MaterialType): boolean {
+  return type === 'paint' || type === 'fencing';
+}
+
+function isVolumeMaterial(type: MaterialType): boolean {
+  return type === 'mulch';
 }
 
 export function MaterialCalculator({ areaSqM, lengthM }: MaterialCalculatorProps) {
@@ -59,21 +81,48 @@ export function MaterialCalculator({ areaSqM, lengthM }: MaterialCalculatorProps
 
   const material = MATERIAL_RATES[selectedMaterial];
   const rate = customRate ?? material.pricePerUnit;
+  const hasArea = sqft > 0;
+  const hasLength = linearft > 0;
+
+  const quantity = useMemo(() => {
+    if (isLinearMaterial(selectedMaterial)) {
+      return linearft;
+    }
+
+    if (isVolumeMaterial(selectedMaterial)) {
+      return cubicyd;
+    }
+
+    return sqft;
+  }, [selectedMaterial, sqft, linearft, cubicyd]);
+
+  const quantityDisplay = useMemo(() => {
+    if (isLinearMaterial(selectedMaterial)) {
+      return `${quantity.toFixed(0)} linear ft`;
+    }
+
+    if (isVolumeMaterial(selectedMaterial)) {
+      return `${quantity.toFixed(1)} cu yd`;
+    }
+
+    return `${quantity.toFixed(0)} sq ft`;
+  }, [quantity, selectedMaterial]);
+
+  const quantityHint = useMemo(() => {
+    if (isLinearMaterial(selectedMaterial) && !hasLength) {
+      return 'Draw a line on the map to estimate this material.';
+    }
+
+    if (!isLinearMaterial(selectedMaterial) && !hasArea) {
+      return 'Draw an area polygon on the map to estimate this material.';
+    }
+
+    return null;
+  }, [hasArea, hasLength, selectedMaterial]);
 
   const estimate = useMemo(() => {
-    let quantity = 0;
-    switch (selectedMaterial) {
-      case 'paint':
-        quantity = linearft;
-        break;
-      case 'mulch':
-        quantity = cubicyd;
-        break;
-      default:
-        quantity = sqft;
-    }
     return quantity * rate;
-  }, [selectedMaterial, sqft, linearft, cubicyd, rate]);
+  }, [quantity, rate]);
 
   return (
     <section className="calculator-section">
@@ -92,8 +141,24 @@ export function MaterialCalculator({ areaSqM, lengthM }: MaterialCalculatorProps
 
       {expanded && (
         <div className="calculator-content">
+          <div className="calculator-presets" role="group" aria-label="Quick calculators">
+            {QUICK_PRESETS.map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                className={selectedMaterial === preset ? 'preset-chip active' : 'preset-chip'}
+                onClick={() => {
+                  setSelectedMaterial(preset);
+                  setCustomRate(null);
+                }}
+              >
+                {MATERIAL_RATES[preset].name}
+              </button>
+            ))}
+          </div>
+
           <div className="calculator-select">
-            <label htmlFor="material-select">Material:</label>
+            <label htmlFor="material-select">Calculator type:</label>
             <select
               id="material-select"
               value={selectedMaterial}
@@ -111,6 +176,7 @@ export function MaterialCalculator({ areaSqM, lengthM }: MaterialCalculatorProps
           </div>
 
           <p className="calculator-description">{material.description}</p>
+          {quantityHint ? <p className="calculator-helper">{quantityHint}</p> : null}
 
           <div className="calculator-rate">
             <label htmlFor="rate-input">
@@ -129,13 +195,7 @@ export function MaterialCalculator({ areaSqM, lengthM }: MaterialCalculatorProps
           <div className="calculator-result">
             <div className="result-row">
               <span>Quantity:</span>
-              <strong>
-                {selectedMaterial === 'paint'
-                  ? `${linearft.toFixed(0)} linear ft`
-                  : selectedMaterial === 'mulch'
-                    ? `${cubicyd.toFixed(1)} cu yd`
-                    : `${sqft.toFixed(0)} sq ft`}
-              </strong>
+              <strong>{quantityDisplay}</strong>
             </div>
             <div className="result-row">
               <span>Unit Price:</span>
