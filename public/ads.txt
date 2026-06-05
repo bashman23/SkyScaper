@@ -1,0 +1,1 @@
+# Configure VITE_ADSENSE_CLIENT_ID to generate a production Google AdSense ads.txt entry.
