@@ -8,6 +8,7 @@ export type MeasurementProperties = {
   id: string;
   name: string;
   layerPath?: string;
+  color?: string;
   measurementType: MeasurementType;
   areaSqM: number;
   perimeterM: number;

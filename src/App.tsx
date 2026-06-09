@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import MapboxDraw from '@mapbox/mapbox-gl-draw';
 import mapboxgl from 'mapbox-gl';
+import * as turf from '@turf/turf';
 import {
   Download,
   Eraser,
@@ -12,13 +13,14 @@ import {
   Pentagon,
   Redo2,
   Ruler,
+  Scissors,
   Search,
   Trash2,
   Undo2,
   Upload,
   X
 } from 'lucide-react';
-import type { Feature, FeatureCollection, Geometry } from 'geojson';
+import type { Feature, FeatureCollection, Geometry, MultiPolygon, Polygon } from 'geojson';
 import type { DrawFeatureCollection, MeasurementCollection, MeasurementFeature } from './types';
 import { AdSlot } from './components/AdSlot';
 import { getLegalPageKind, LegalPage } from './components/LegalPages';
@@ -30,7 +32,7 @@ import { searchPlaces, type GeocodeResult } from './lib/geocoding';
 import { createMeasurementLabelCollection } from './lib/labels';
 import { parseImportedMeasurements } from './lib/import';
 
-type DrawMode = 'simple_select' | 'draw_polygon' | 'draw_line_string' | 'freehand';
+type DrawMode = 'simple_select' | 'draw_polygon' | 'draw_line_string' | 'freehand' | 'cut';
 const LABEL_SOURCE_ID = 'measurement-labels';
 const LABEL_HALO_LAYER_ID = 'measurement-label-halos';
 const LABEL_LAYER_ID = 'measurement-label-text';
@@ -58,12 +60,15 @@ function MeasurementApp() {
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const drawRef = useRef<MapboxDraw | null>(null);
   const freehandPointsRef = useRef<Array<[number, number]>>([]);
+  const freehandDrawingRef = useRef(false);
+  const activeModeRef = useRef<DrawMode>('simple_select');
   const isApplyingSnapshotRef = useRef(false);
   const featuresRef = useRef<MeasurementCollection>(initialProject.features);
   const historyRef = useRef<MeasurementCollection[]>([cloneCollection(initialProject.features)]);
   const [features, setFeatures] = useState<MeasurementCollection>(initialProject.features);
   const [historyIndex, setHistoryIndex] = useState(0);
   const [selectedFeatureId, setSelectedFeatureId] = useState<string | null>(initialProject.ui.selectedFeatureId);
+  const selectedFeatureIdRef = useRef<string | null>(initialProject.ui.selectedFeatureId);
   const [activeMode, setActiveMode] = useState<DrawMode>('simple_select');
   const [mapReady, setMapReady] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -75,6 +80,14 @@ function MeasurementApp() {
   const [isFreehandDrawing, setIsFreehandDrawing] = useState(false);
   const [rectangleInput, setRectangleInput] = useState('10x20');
   const [rectangleUnits, setRectangleUnits] = useState<'ft' | 'm'>('ft');
+
+  useEffect(() => {
+    activeModeRef.current = activeMode;
+  }, [activeMode]);
+
+  useEffect(() => {
+    selectedFeatureIdRef.current = selectedFeatureId;
+  }, [selectedFeatureId]);
 
   const pushHistorySnapshot = (collection: MeasurementCollection) => {
     const snapshot = cloneCollection(collection);
@@ -163,9 +176,61 @@ function MeasurementApp() {
     };
 
     const handleModeChange = (event: { mode?: DrawMode }) => {
+      if (activeModeRef.current === 'freehand' || activeModeRef.current === 'cut') {
+        return;
+      }
+
       if (event.mode) {
         setActiveMode(event.mode);
       }
+    };
+
+    const handleDrawCreate = (event: { features?: Array<Feature<Geometry>> }) => {
+      const cutter = event.features?.[0];
+      const drawActiveMode = activeModeRef.current;
+
+      if (drawActiveMode === 'cut' && cutter?.geometry?.type === 'Polygon' && drawRef.current) {
+        const selectedId = selectedFeatureIdRef.current;
+        const selectedPolygon = featuresRef.current.features.find(
+          (feature) => String(feature.id) === selectedId && feature.geometry.type === 'Polygon'
+        );
+
+        if (selectedPolygon) {
+          const differenceFeature = turf.difference(
+            turf.featureCollection([
+              selectedPolygon as unknown as Feature<Polygon | MultiPolygon>,
+              cutter as Feature<Polygon>
+            ])
+          );
+
+          drawRef.current.delete(String(cutter.id ?? ''));
+
+          const nextPolygonGeometry = differenceFeature ? toPolygonGeometry(differenceFeature.geometry) : null;
+
+          if (nextPolygonGeometry) {
+            drawRef.current.delete(String(selectedPolygon.id));
+            drawRef.current.add({
+              type: 'Feature',
+              id: selectedPolygon.id,
+              geometry: nextPolygonGeometry,
+              properties: {
+                ...selectedPolygon.properties,
+                updatedAt: new Date().toISOString()
+              }
+            } as unknown as Feature);
+          } else {
+            drawRef.current.delete(String(selectedPolygon.id));
+            setSelectedFeatureId(null);
+          }
+
+          syncMeasurements();
+          setActiveMode('simple_select');
+          changeDrawMode(drawRef.current, 'simple_select');
+          return;
+        }
+      }
+
+      syncMeasurements();
     };
 
     map.on('load', () => {
@@ -177,14 +242,14 @@ function MeasurementApp() {
       updateMeasurementLabels(map, initialProject.features);
       setMapReady(true);
     });
-    map.on('draw.create', syncMeasurements);
+    map.on('draw.create', handleDrawCreate);
     map.on('draw.update', syncMeasurements);
     map.on('draw.delete', syncMeasurements);
     map.on('draw.selectionchange', handleSelection);
     map.on('draw.modechange', handleModeChange);
 
     return () => {
-      map.off('draw.create', syncMeasurements);
+      map.off('draw.create', handleDrawCreate);
       map.off('draw.update', syncMeasurements);
       map.off('draw.delete', syncMeasurements);
       map.off('draw.selectionchange', handleSelection);
@@ -220,6 +285,12 @@ function MeasurementApp() {
     if (mode === 'freehand') {
       changeDrawMode(drawRef.current, 'simple_select');
       setActiveMode('freehand');
+      return;
+    }
+
+    if (mode === 'cut') {
+      changeDrawMode(drawRef.current, 'draw_polygon');
+      setActiveMode('cut');
       return;
     }
 
@@ -415,13 +486,14 @@ function MeasurementApp() {
     canvas.style.cursor = 'crosshair';
 
     const handleMouseDown = (event: mapboxgl.MapMouseEvent) => {
+      freehandDrawingRef.current = true;
       setIsFreehandDrawing(true);
       freehandPointsRef.current = [[event.lngLat.lng, event.lngLat.lat]];
       map.dragPan.disable();
     };
 
     const handleMouseMove = (event: mapboxgl.MapMouseEvent) => {
-      if (!isFreehandDrawing) {
+      if (!freehandDrawingRef.current) {
         return;
       }
 
@@ -429,10 +501,11 @@ function MeasurementApp() {
     };
 
     const completeFreehand = () => {
-      if (!isFreehandDrawing) {
+      if (!freehandDrawingRef.current) {
         return;
       }
 
+      freehandDrawingRef.current = false;
       setIsFreehandDrawing(false);
       map.dragPan.enable();
       const points = freehandPointsRef.current;
@@ -481,10 +554,11 @@ function MeasurementApp() {
       map.off('mousemove', handleMouseMove);
       map.off('mouseup', completeFreehand);
       map.off('mouseout', completeFreehand);
+      freehandDrawingRef.current = false;
       setIsFreehandDrawing(false);
       freehandPointsRef.current = [];
     };
-  }, [activeMode, isFreehandDrawing]);
+  }, [activeMode]);
 
   const onImportClick = () => {
     importInputRef.current?.click();
@@ -569,6 +643,9 @@ function MeasurementApp() {
         <button className={activeMode === 'freehand' ? 'icon-button active' : 'icon-button'} onClick={() => changeMode('freehand')} title="Freehand pen">
           Pen
         </button>
+        <button className={activeMode === 'cut' ? 'icon-button active' : 'icon-button'} onClick={() => changeMode('cut')} title="Cut from selected area">
+          <Scissors size={18} aria-hidden="true" />
+        </button>
         <button className="icon-button" onClick={deleteSelectedFeature} disabled={!selectedFeatureId} title="Delete selected">
           <Trash2 size={20} aria-hidden="true" />
         </button>
@@ -579,6 +656,31 @@ function MeasurementApp() {
           {panelOpen ? <X size={20} aria-hidden="true" /> : <Menu size={20} aria-hidden="true" />}
         </button>
       </section>
+
+      <aside className="quick-selection-panel" aria-label="Quick selection list">
+        <div className="quick-selection-title">Selections</div>
+        <ol>
+          {features.features.map((feature) => {
+            const id = String(feature.id ?? feature.properties.id);
+            const isSelected = id === selectedFeatureId;
+            const primary = feature.properties.measurementType === 'polygon' ? formatArea(feature.properties.areaSqM) : formatDistance(feature.properties.lengthM);
+            return (
+              <li key={id}>
+                <button className={isSelected ? 'quick-selection-row selected' : 'quick-selection-row'} onClick={() => {
+                  setSelectedFeatureId(id);
+                  changeDrawMode(drawRef.current, 'simple_select', { featureIds: [id] });
+                }}>
+                  <span className="quick-swatch" style={{ backgroundColor: feature.properties.color ?? '#22c55e' }} aria-hidden="true" />
+                  <span className="quick-selection-copy">
+                    <strong>{feature.properties.name}</strong>
+                    <small>{primary}</small>
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ol>
+      </aside>
 
       <aside className={`measurement-panel ${panelOpen ? 'open' : 'closed'}`} aria-label="Measurements">
         <header className="panel-header">
@@ -596,30 +698,33 @@ function MeasurementApp() {
           <Metric label="Total length" value={formatDistance(totals.lengthM)} />
         </div>
 
-        <section className="shape-builder" aria-label="Create a rectangle by dimensions">
-          <div className="shape-builder-header">
-            <strong>Quick Shape Builder</strong>
-            {activeMode === 'freehand' ? <span>{isFreehandDrawing ? 'Drawing...' : 'Pen mode ready'}</span> : null}
-          </div>
-          <div className="shape-builder-row">
-            <input
-              aria-label="Rectangle dimensions"
-              value={rectangleInput}
-              onChange={(event) => setRectangleInput(event.target.value)}
-              placeholder="10x20"
-            />
-            <select aria-label="Rectangle units" value={rectangleUnits} onChange={(event) => setRectangleUnits(event.target.value as 'ft' | 'm')}>
-              <option value="ft">ft</option>
-              <option value="m">m</option>
-            </select>
-            <button className="action-button" type="button" onClick={createRectangleFromInput}>
-              Add
-            </button>
-          </div>
-          <p>Type dimensions like 10x20 to create a movable rectangle at map center.</p>
-        </section>
+        <details className="panel-group" open>
+          <summary>Drawing and Search</summary>
+          <section className="shape-builder" aria-label="Create a rectangle by dimensions">
+            <div className="shape-builder-header">
+              <strong>Quick Shape Builder</strong>
+              {activeMode === 'freehand' ? <span>{isFreehandDrawing ? 'Drawing...' : 'Pen mode ready'}</span> : null}
+              {activeMode === 'cut' ? <span>Select area, then draw cut shape</span> : null}
+            </div>
+            <div className="shape-builder-row">
+              <input
+                aria-label="Rectangle dimensions"
+                value={rectangleInput}
+                onChange={(event) => setRectangleInput(event.target.value)}
+                placeholder="10x20"
+              />
+              <select aria-label="Rectangle units" value={rectangleUnits} onChange={(event) => setRectangleUnits(event.target.value as 'ft' | 'm')}>
+                <option value="ft">ft</option>
+                <option value="m">m</option>
+              </select>
+              <button className="action-button" type="button" onClick={createRectangleFromInput}>
+                Add
+              </button>
+            </div>
+            <p>Type dimensions like 10x20 to create a movable rectangle at map center.</p>
+          </section>
 
-        <section className="search-panel" aria-label="Find a property">
+          <section className="search-panel" aria-label="Find a property">
           <form onSubmit={submitSearch}>
             <label htmlFor="property-search">Find property</label>
             <div className="search-input-row">
@@ -654,52 +759,58 @@ function MeasurementApp() {
               ))}
             </ol>
           ) : null}
-        </section>
+          </section>
 
-        <div className="history-row">
-          <button className="action-button" onClick={undo} disabled={!canUndo} title="Undo (Ctrl+Z)">
-            <Undo2 size={16} aria-hidden="true" />
-            Undo
-          </button>
-          <button className="action-button" onClick={redo} disabled={!canRedo} title="Redo (Ctrl+Y)">
-            <Redo2 size={16} aria-hidden="true" />
-            Redo
-          </button>
-        </div>
+          <div className="history-row">
+            <button className="action-button" onClick={undo} disabled={!canUndo} title="Undo (Ctrl+Z)">
+              <Undo2 size={16} aria-hidden="true" />
+              Undo
+            </button>
+            <button className="action-button" onClick={redo} disabled={!canRedo} title="Redo (Ctrl+Y)">
+              <Redo2 size={16} aria-hidden="true" />
+              Redo
+            </button>
+          </div>
 
-        <div className="export-row">
-          <input
-            ref={importInputRef}
-            type="file"
-            accept=".json,.geojson,application/geo+json,application/json"
-            onChange={onImportFileChange}
-            hidden
-          />
-          <button className="action-button" onClick={onImportClick}>
-            <Upload size={16} aria-hidden="true" />
-            Import
-          </button>
-          <button className="action-button" onClick={exportGeoJson} disabled={features.features.length === 0}>
-            <Download size={16} aria-hidden="true" />
-            GeoJSON
-          </button>
-          <button className="action-button" onClick={exportCsv} disabled={features.features.length === 0}>
-            <Download size={16} aria-hidden="true" />
-            CSV
-          </button>
-        </div>
-        {importStatus !== 'idle' ? <p className={importStatus === 'error' ? 'import-status error' : 'import-status'}>{importMessage}</p> : null}
+          <div className="export-row">
+            <input
+              ref={importInputRef}
+              type="file"
+              accept=".json,.geojson,application/geo+json,application/json"
+              onChange={onImportFileChange}
+              hidden
+            />
+            <button className="action-button" onClick={onImportClick}>
+              <Upload size={16} aria-hidden="true" />
+              Import
+            </button>
+            <button className="action-button" onClick={exportGeoJson} disabled={features.features.length === 0}>
+              <Download size={16} aria-hidden="true" />
+              GeoJSON
+            </button>
+            <button className="action-button" onClick={exportCsv} disabled={features.features.length === 0}>
+              <Download size={16} aria-hidden="true" />
+              CSV
+            </button>
+          </div>
+          {importStatus !== 'idle' ? <p className={importStatus === 'error' ? 'import-status error' : 'import-status'}>{importMessage}</p> : null}
+        </details>
 
-        <AdSlot />
+        <details className="panel-group" open>
+          <summary>Estimator</summary>
+          <AdSlot />
+          <MaterialCalculator areaSqM={totals.areaSqM} lengthM={totals.lengthM} />
+        </details>
 
-        <MaterialCalculator areaSqM={totals.areaSqM} lengthM={totals.lengthM} />
+        <details className="panel-group" open>
+          <summary>Selections</summary>
+          <SelectedFeatureEditor feature={selectedFeature} onRename={renameSelectedFeature} onLayerPathChange={updateSelectedFeatureLayerPath} />
 
-        <SelectedFeatureEditor feature={selectedFeature} onRename={renameSelectedFeature} onLayerPathChange={updateSelectedFeatureLayerPath} />
-
-        <FeatureList features={features.features} selectedFeatureId={selectedFeatureId} onSelect={(id) => {
-          setSelectedFeatureId(id);
-          changeDrawMode(drawRef.current, 'simple_select', { featureIds: [id] });
-        }} />
+          <FeatureList features={features.features} selectedFeatureId={selectedFeatureId} onSelect={(id) => {
+            setSelectedFeatureId(id);
+            changeDrawMode(drawRef.current, 'simple_select', { featureIds: [id] });
+          }} />
+        </details>
 
         <footer className="accuracy-note">
           <MapPinned size={16} aria-hidden="true" />
@@ -860,6 +971,25 @@ function feetToMeters(feet: number): number {
   return feet * 0.3048;
 }
 
+function toPolygonGeometry(geometry: Polygon | MultiPolygon): Polygon | null {
+  if (geometry.type === 'Polygon') {
+    return geometry;
+  }
+
+  if (geometry.coordinates.length === 0) {
+    return null;
+  }
+
+  const largest = geometry.coordinates
+    .map((coordinates) => ({
+      coordinates,
+      area: turf.area({ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates } })
+    }))
+    .sort((a, b) => b.area - a.area)[0];
+
+  return largest ? { type: 'Polygon', coordinates: largest.coordinates } : null;
+}
+
 function getTotals(features: MeasurementFeature[]) {
   return features.reduce(
     (totals, feature) => ({
@@ -953,7 +1083,7 @@ function getDrawStyles() {
       type: 'fill',
       filter: ['all', ['==', '$type', 'Polygon'], ['!=', 'mode', 'static']],
       paint: {
-        'fill-color': '#22c55e',
+        'fill-color': ['coalesce', ['get', 'color'], '#22c55e'],
         'fill-outline-color': '#f8fafc',
         'fill-opacity': 0.24
       }
@@ -972,7 +1102,7 @@ function getDrawStyles() {
       type: 'line',
       filter: ['all', ['==', '$type', 'LineString'], ['!=', 'mode', 'static']],
       paint: {
-        'line-color': '#38bdf8',
+        'line-color': ['coalesce', ['get', 'color'], '#38bdf8'],
         'line-width': 3
       }
     },

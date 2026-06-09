@@ -13,6 +13,7 @@ import type {
 const SQ_M_TO_SQ_FT = 10.76391041671;
 const SQ_M_TO_ACRES = 0.00024710538146717;
 const M_TO_FT = 3.2808398950131;
+const FEATURE_COLOR_PALETTE = ['#22c55e', '#0ea5e9', '#f97316', '#e11d48', '#7c3aed', '#14b8a6', '#f59e0b'];
 
 type ExistingFeatureMap = Map<string, MeasurementFeature>;
 
@@ -72,6 +73,7 @@ export function createMeasuredCollection(features: DraftFeature[], previous: Mea
   const now = new Date().toISOString();
   let polygonCount = previous.filter((feature) => feature.geometry.type === 'Polygon').length;
   let lineCount = previous.filter((feature) => feature.geometry.type === 'LineString').length;
+  let colorIndex = previous.length;
 
   return {
     type: 'FeatureCollection',
@@ -84,6 +86,7 @@ export function createMeasuredCollection(features: DraftFeature[], previous: Mea
         const measurements = calculateMeasurements(feature.geometry);
         const defaultName =
           measurementType === 'polygon' ? `Area ${++polygonCount}` : `Line ${++lineCount}`;
+        const color = feature.properties?.color ?? existing?.properties.color ?? FEATURE_COLOR_PALETTE[colorIndex++ % FEATURE_COLOR_PALETTE.length];
 
         return {
           type: 'Feature',
@@ -93,6 +96,7 @@ export function createMeasuredCollection(features: DraftFeature[], previous: Mea
             id,
             name: feature.properties?.name ?? existing?.properties.name ?? defaultName,
             layerPath: feature.properties?.layerPath ?? existing?.properties.layerPath ?? 'Base',
+            color,
             measurementType,
             ...measurements,
             createdAt: feature.properties?.createdAt ?? existing?.properties.createdAt ?? now,

@@ -60,6 +60,82 @@ button:disabled {
   backdrop-filter: blur(10px);
 }
 
+.quick-selection-panel {
+  position: absolute;
+  top: 18px;
+  left: 96px;
+  z-index: 3;
+  width: min(280px, calc(100vw - 520px));
+  max-height: 42vh;
+  border: 1px solid rgb(226 232 240 / 0.78);
+  border-radius: 8px;
+  padding: 8px;
+  background: rgb(255 255 255 / 0.92);
+  box-shadow: 0 16px 42px rgb(15 23 42 / 0.16);
+  backdrop-filter: blur(10px);
+}
+
+.quick-selection-title {
+  margin-bottom: 7px;
+  color: #475569;
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.quick-selection-panel ol {
+  display: grid;
+  gap: 6px;
+  max-height: calc(42vh - 32px);
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.quick-selection-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 7px;
+  color: #172033;
+  background: #ffffff;
+  text-align: left;
+}
+
+.quick-selection-row:hover,
+.quick-selection-row.selected {
+  border-color: #0e7490;
+  background: #ecfeff;
+}
+
+.quick-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+}
+
+.quick-selection-copy {
+  display: grid;
+  min-width: 0;
+}
+
+.quick-selection-copy strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.82rem;
+}
+
+.quick-selection-copy small {
+  color: #64748b;
+  font-size: 0.72rem;
+}
+
 .mapboxgl-ctrl-top-left {
   display: none;
 }
@@ -127,6 +203,37 @@ button:disabled {
   backdrop-filter: blur(12px);
   overflow-y: auto;
   overscroll-behavior-y: contain;
+}
+
+.panel-group {
+  border-top: 1px solid #e2e8f0;
+  padding-top: 10px;
+}
+
+.panel-group > summary {
+  list-style: none;
+  cursor: pointer;
+  color: #334155;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.panel-group > summary::-webkit-details-marker {
+  display: none;
+}
+
+.panel-group > summary::after {
+  content: '+';
+  float: right;
+  color: #64748b;
+}
+
+.panel-group[open] > summary::after {
+  content: '-';
+}
+
+.panel-group > *:not(summary) {
+  margin-top: 10px;
 }
 
 .panel-header {
@@ -991,6 +1098,10 @@ h1 {
   .mobile-menu-toggle {
     display: inline-grid;
     margin-left: auto;
+  }
+
+  .quick-selection-panel {
+    display: none;
   }
 
   .measurement-panel {
