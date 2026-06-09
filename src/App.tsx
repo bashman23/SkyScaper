@@ -193,44 +193,58 @@ function MeasurementApp() {
       const drawActiveMode = activeModeRef.current;
 
       if (drawActiveMode === 'cut' && cutter?.geometry?.type === 'Polygon' && drawRef.current) {
-        const selectedId = selectedFeatureIdRef.current;
-        const selectedPolygon = featuresRef.current.features.find(
-          (feature) => String(feature.id) === selectedId && feature.geometry.type === 'Polygon'
-        );
+        drawRef.current.delete(String(cutter.id ?? ''));
 
-        if (selectedPolygon) {
+        const polygonsToCut = featuresRef.current.features.filter((feature) => feature.geometry.type === 'Polygon');
+        let changed = false;
+
+        polygonsToCut.forEach((polygonFeature) => {
+          const intersects = turf.booleanIntersects(
+            polygonFeature as unknown as Feature<Polygon | MultiPolygon>,
+            cutter as Feature<Polygon>
+          );
+          if (!intersects) {
+            return;
+          }
+
+          changed = true;
           const differenceFeature = turf.difference(
             turf.featureCollection([
-              selectedPolygon as unknown as Feature<Polygon | MultiPolygon>,
+              polygonFeature as unknown as Feature<Polygon | MultiPolygon>,
               cutter as Feature<Polygon>
             ])
           );
 
-          drawRef.current.delete(String(cutter.id ?? ''));
+          drawRef.current?.delete(String(polygonFeature.id));
+          if (!differenceFeature) {
+            return;
+          }
 
-          const nextPolygonGeometry = differenceFeature ? toPolygonGeometry(differenceFeature.geometry) : null;
-
-          if (nextPolygonGeometry) {
-            drawRef.current.delete(String(selectedPolygon.id));
-            drawRef.current.add({
+          const parts = toPolygonGeometries(differenceFeature.geometry);
+          parts.forEach((geometry, partIndex) => {
+            const nextId = partIndex === 0 ? String(polygonFeature.id) : crypto.randomUUID();
+            drawRef.current?.add({
               type: 'Feature',
-              id: selectedPolygon.id,
-              geometry: nextPolygonGeometry,
+              id: nextId,
+              geometry,
               properties: {
-                ...selectedPolygon.properties,
+                ...polygonFeature.properties,
+                id: nextId,
+                name: partIndex === 0 ? polygonFeature.properties.name : `${polygonFeature.properties.name} (part ${partIndex + 1})`,
                 updatedAt: new Date().toISOString()
               }
             } as unknown as Feature);
-          } else {
-            drawRef.current.delete(String(selectedPolygon.id));
-            setSelectedFeatureId(null);
-          }
+          });
+        });
 
+        if (changed) {
+          setSelectedFeatureId(null);
           syncMeasurements();
-          setActiveMode('simple_select');
-          changeDrawMode(drawRef.current, 'simple_select');
-          return;
         }
+
+        changeDrawMode(drawRef.current, 'draw_polygon');
+        setActiveMode('cut');
+        return;
       }
 
       syncMeasurements();
@@ -978,23 +992,22 @@ function feetToMeters(feet: number): number {
   return feet * 0.3048;
 }
 
-function toPolygonGeometry(geometry: Polygon | MultiPolygon): Polygon | null {
+function toPolygonGeometries(geometry: Polygon | MultiPolygon): Polygon[] {
   if (geometry.type === 'Polygon') {
-    return geometry;
+    return [geometry];
   }
 
   if (geometry.coordinates.length === 0) {
-    return null;
+    return [];
   }
 
-  const largest = geometry.coordinates
+  return geometry.coordinates
     .map((coordinates) => ({
       coordinates,
       area: turf.area({ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates } })
     }))
-    .sort((a, b) => b.area - a.area)[0];
-
-  return largest ? { type: 'Polygon', coordinates: largest.coordinates } : null;
+    .sort((a, b) => b.area - a.area)
+    .map((entry) => ({ type: 'Polygon', coordinates: entry.coordinates }));
 }
 
 function getTotals(features: MeasurementFeature[]) {
