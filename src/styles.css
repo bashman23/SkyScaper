@@ -78,6 +78,8 @@ button:disabled {
     background 140ms ease,
     color 140ms ease,
     transform 140ms ease;
+  font-size: 0.72rem;
+  font-weight: 800;
 }
 
 .icon-button:hover:not(:disabled),
@@ -123,6 +125,8 @@ button:disabled {
   background: rgb(255 255 255 / 0.95);
   box-shadow: 0 18px 50px rgb(15 23 42 / 0.22);
   backdrop-filter: blur(12px);
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
 }
 
 .panel-header {
@@ -168,6 +172,58 @@ h1 {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 9px;
+}
+
+.shape-builder {
+  border-top: 1px solid #e2e8f0;
+  padding-top: 14px;
+}
+
+.shape-builder-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.shape-builder-header strong {
+  color: #475569;
+  font-size: 0.83rem;
+}
+
+.shape-builder-header span {
+  color: #0f5161;
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.shape-builder-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px 68px;
+  gap: 8px;
+}
+
+.shape-builder-row input,
+.shape-builder-row select {
+  min-height: 36px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 0 9px;
+  color: #172033;
+  background: #ffffff;
+}
+
+.shape-builder-row input:focus,
+.shape-builder-row select:focus {
+  border-color: #0e7490;
+  outline: 3px solid rgb(14 116 144 / 0.16);
+}
+
+.shape-builder p {
+  margin: 8px 0 0;
+  color: #64748b;
+  font-size: 0.78rem;
 }
 
 .search-panel {
@@ -794,6 +850,42 @@ h1 {
 .calculator-rate input:focus {
   border-color: #0e7490;
   outline: 3px solid rgb(14 116 144 / 0.16);
+}
+
+.asphalt-controls {
+  display: grid;
+  gap: 6px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px;
+  background: #f8fafc;
+}
+
+.asphalt-controls label {
+  color: #475569;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.asphalt-controls input[type='number'] {
+  min-height: 34px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 0 9px;
+  color: #172033;
+  background: #ffffff;
+}
+
+.asphalt-controls input[type='number']:focus {
+  border-color: #0e7490;
+  outline: 3px solid rgb(14 116 144 / 0.16);
+}
+
+.checkbox-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #172033;
 }
 
 .calculator-result {

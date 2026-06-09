@@ -7,6 +7,7 @@ export type MeasurementType = 'polygon' | 'line';
 export type MeasurementProperties = {
   id: string;
   name: string;
+  layerPath?: string;
   measurementType: MeasurementType;
   areaSqM: number;
   perimeterM: number;

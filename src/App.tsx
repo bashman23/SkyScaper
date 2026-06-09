@@ -30,7 +30,7 @@ import { searchPlaces, type GeocodeResult } from './lib/geocoding';
 import { createMeasurementLabelCollection } from './lib/labels';
 import { parseImportedMeasurements } from './lib/import';
 
-type DrawMode = 'simple_select' | 'draw_polygon' | 'draw_line_string';
+type DrawMode = 'simple_select' | 'draw_polygon' | 'draw_line_string' | 'freehand';
 const LABEL_SOURCE_ID = 'measurement-labels';
 const LABEL_HALO_LAYER_ID = 'measurement-label-halos';
 const LABEL_LAYER_ID = 'measurement-label-text';
@@ -57,6 +57,7 @@ function MeasurementApp() {
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const drawRef = useRef<MapboxDraw | null>(null);
+  const freehandPointsRef = useRef<Array<[number, number]>>([]);
   const isApplyingSnapshotRef = useRef(false);
   const featuresRef = useRef<MeasurementCollection>(initialProject.features);
   const historyRef = useRef<MeasurementCollection[]>([cloneCollection(initialProject.features)]);
@@ -71,6 +72,9 @@ function MeasurementApp() {
   const [importStatus, setImportStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [importMessage, setImportMessage] = useState('');
   const [panelOpen, setPanelOpen] = useState(true);
+  const [isFreehandDrawing, setIsFreehandDrawing] = useState(false);
+  const [rectangleInput, setRectangleInput] = useState('10x20');
+  const [rectangleUnits, setRectangleUnits] = useState<'ft' | 'm'>('ft');
 
   const pushHistorySnapshot = (collection: MeasurementCollection) => {
     const snapshot = cloneCollection(collection);
@@ -196,7 +200,29 @@ function MeasurementApp() {
   const canUndo = historyIndex > 0;
   const canRedo = historyIndex < historyRef.current.length - 1;
 
+  const syncMeasurementsFromDraw = (recordHistory: boolean) => {
+    if (!drawRef.current) {
+      return;
+    }
+
+    const measured = createMeasuredCollection((drawRef.current.getAll() as DrawFeatureCollection).features, featuresRef.current.features);
+    featuresRef.current = measured;
+    setFeatures(measured);
+    writeMeasurementPropertiesToDraw(drawRef.current, measured);
+    updateMeasurementLabels(mapRef.current, measured);
+
+    if (recordHistory) {
+      pushHistorySnapshot(measured);
+    }
+  };
+
   const changeMode = (mode: DrawMode) => {
+    if (mode === 'freehand') {
+      changeDrawMode(drawRef.current, 'simple_select');
+      setActiveMode('freehand');
+      return;
+    }
+
     changeDrawMode(drawRef.current, mode);
     setActiveMode(mode);
   };
@@ -262,12 +288,7 @@ function MeasurementApp() {
 
     drawRef.current.delete(selectedFeatureId);
     setSelectedFeatureId(null);
-    const measured = createMeasuredCollection((drawRef.current.getAll() as DrawFeatureCollection).features, featuresRef.current.features);
-    featuresRef.current = measured;
-    setFeatures(measured);
-    writeMeasurementPropertiesToDraw(drawRef.current, measured);
-    updateMeasurementLabels(mapRef.current, measured);
-    pushHistorySnapshot(measured);
+    syncMeasurementsFromDraw(true);
   };
 
   const clearAllFeatures = () => {
@@ -307,6 +328,163 @@ function MeasurementApp() {
     updateMeasurementLabels(mapRef.current, nextFeatures);
     pushHistorySnapshot(nextFeatures);
   };
+
+  const updateSelectedFeatureLayerPath = (layerPath: string) => {
+    if (!selectedFeatureId) {
+      return;
+    }
+
+    const nextPath = layerPath.trimStart() || 'Base';
+    const updatedAt = new Date().toISOString();
+    drawRef.current?.setFeatureProperty(selectedFeatureId, 'layerPath', nextPath);
+    drawRef.current?.setFeatureProperty(selectedFeatureId, 'updatedAt', updatedAt);
+
+    const nextFeatures: MeasurementCollection = {
+      type: 'FeatureCollection',
+      features: features.features.map((feature) =>
+        String(feature.id) === selectedFeatureId
+          ? { ...feature, properties: { ...feature.properties, layerPath: nextPath, updatedAt } }
+          : feature
+      )
+    };
+
+    featuresRef.current = nextFeatures;
+    setFeatures(nextFeatures);
+    updateMeasurementLabels(mapRef.current, nextFeatures);
+    pushHistorySnapshot(nextFeatures);
+  };
+
+  const createRectangleFromInput = () => {
+    const parsed = parseDimensionInput(rectangleInput);
+    const map = mapRef.current;
+    const draw = drawRef.current;
+    if (!parsed || !map || !draw) {
+      return;
+    }
+
+    const widthMeters = rectangleUnits === 'ft' ? feetToMeters(parsed.width) : parsed.width;
+    const heightMeters = rectangleUnits === 'ft' ? feetToMeters(parsed.height) : parsed.height;
+    if (widthMeters <= 0 || heightMeters <= 0) {
+      return;
+    }
+
+    const center = map.getCenter();
+    const latRad = (center.lat * Math.PI) / 180;
+    const deltaLat = (heightMeters / 2) / 111320;
+    const cosLat = Math.max(Math.cos(latRad), 0.0001);
+    const deltaLng = (widthMeters / 2) / (111320 * cosLat);
+
+    const rectangleFeatureId = crypto.randomUUID();
+    const corners: Array<[number, number]> = [
+      [center.lng - deltaLng, center.lat - deltaLat],
+      [center.lng + deltaLng, center.lat - deltaLat],
+      [center.lng + deltaLng, center.lat + deltaLat],
+      [center.lng - deltaLng, center.lat + deltaLat],
+      [center.lng - deltaLng, center.lat - deltaLat]
+    ];
+
+    draw.add({
+      type: 'Feature',
+      id: rectangleFeatureId,
+      properties: {
+        id: rectangleFeatureId,
+        name: `Rectangle ${parsed.width}x${parsed.height} ${rectangleUnits}`,
+        layerPath: 'Base'
+      },
+      geometry: {
+        type: 'Polygon',
+        coordinates: [corners]
+      }
+    } as unknown as Feature);
+
+    setSelectedFeatureId(rectangleFeatureId);
+    changeDrawMode(draw, 'simple_select', { featureIds: [rectangleFeatureId] });
+    setActiveMode('simple_select');
+    syncMeasurementsFromDraw(true);
+  };
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const draw = drawRef.current;
+    if (!map || !draw || activeMode !== 'freehand') {
+      return;
+    }
+
+    const canvas = map.getCanvas();
+    const previousCursor = canvas.style.cursor;
+    canvas.style.cursor = 'crosshair';
+
+    const handleMouseDown = (event: mapboxgl.MapMouseEvent) => {
+      setIsFreehandDrawing(true);
+      freehandPointsRef.current = [[event.lngLat.lng, event.lngLat.lat]];
+      map.dragPan.disable();
+    };
+
+    const handleMouseMove = (event: mapboxgl.MapMouseEvent) => {
+      if (!isFreehandDrawing) {
+        return;
+      }
+
+      freehandPointsRef.current.push([event.lngLat.lng, event.lngLat.lat]);
+    };
+
+    const completeFreehand = () => {
+      if (!isFreehandDrawing) {
+        return;
+      }
+
+      setIsFreehandDrawing(false);
+      map.dragPan.enable();
+      const points = freehandPointsRef.current;
+      freehandPointsRef.current = [];
+
+      if (points.length < 3) {
+        return;
+      }
+
+      const first = points[0];
+      const last = points[points.length - 1];
+      if (first[0] !== last[0] || first[1] !== last[1]) {
+        points.push([first[0], first[1]]);
+      }
+
+      const featureId = crypto.randomUUID();
+      draw.add({
+        type: 'Feature',
+        id: featureId,
+        properties: {
+          id: featureId,
+          name: 'Freehand Area',
+          layerPath: 'Base'
+        },
+        geometry: {
+          type: 'Polygon',
+          coordinates: [points]
+        }
+      } as unknown as Feature);
+
+      setSelectedFeatureId(featureId);
+      setActiveMode('simple_select');
+      changeDrawMode(draw, 'simple_select', { featureIds: [featureId] });
+      syncMeasurementsFromDraw(true);
+    };
+
+    map.on('mousedown', handleMouseDown);
+    map.on('mousemove', handleMouseMove);
+    map.on('mouseup', completeFreehand);
+    map.on('mouseout', completeFreehand);
+
+    return () => {
+      canvas.style.cursor = previousCursor;
+      map.dragPan.enable();
+      map.off('mousedown', handleMouseDown);
+      map.off('mousemove', handleMouseMove);
+      map.off('mouseup', completeFreehand);
+      map.off('mouseout', completeFreehand);
+      setIsFreehandDrawing(false);
+      freehandPointsRef.current = [];
+    };
+  }, [activeMode, isFreehandDrawing]);
 
   const onImportClick = () => {
     importInputRef.current?.click();
@@ -388,6 +566,9 @@ function MeasurementApp() {
         <button className={activeMode === 'draw_line_string' ? 'icon-button active' : 'icon-button'} onClick={() => changeMode('draw_line_string')} title="Draw line">
           <Ruler size={20} aria-hidden="true" />
         </button>
+        <button className={activeMode === 'freehand' ? 'icon-button active' : 'icon-button'} onClick={() => changeMode('freehand')} title="Freehand pen">
+          Pen
+        </button>
         <button className="icon-button" onClick={deleteSelectedFeature} disabled={!selectedFeatureId} title="Delete selected">
           <Trash2 size={20} aria-hidden="true" />
         </button>
@@ -414,6 +595,29 @@ function MeasurementApp() {
           <Metric label="Total area" value={formatArea(totals.areaSqM)} />
           <Metric label="Total length" value={formatDistance(totals.lengthM)} />
         </div>
+
+        <section className="shape-builder" aria-label="Create a rectangle by dimensions">
+          <div className="shape-builder-header">
+            <strong>Quick Shape Builder</strong>
+            {activeMode === 'freehand' ? <span>{isFreehandDrawing ? 'Drawing...' : 'Pen mode ready'}</span> : null}
+          </div>
+          <div className="shape-builder-row">
+            <input
+              aria-label="Rectangle dimensions"
+              value={rectangleInput}
+              onChange={(event) => setRectangleInput(event.target.value)}
+              placeholder="10x20"
+            />
+            <select aria-label="Rectangle units" value={rectangleUnits} onChange={(event) => setRectangleUnits(event.target.value as 'ft' | 'm')}>
+              <option value="ft">ft</option>
+              <option value="m">m</option>
+            </select>
+            <button className="action-button" type="button" onClick={createRectangleFromInput}>
+              Add
+            </button>
+          </div>
+          <p>Type dimensions like 10x20 to create a movable rectangle at map center.</p>
+        </section>
 
         <section className="search-panel" aria-label="Find a property">
           <form onSubmit={submitSearch}>
@@ -490,7 +694,7 @@ function MeasurementApp() {
 
         <MaterialCalculator areaSqM={totals.areaSqM} lengthM={totals.lengthM} />
 
-        <SelectedFeatureEditor feature={selectedFeature} onRename={renameSelectedFeature} />
+        <SelectedFeatureEditor feature={selectedFeature} onRename={renameSelectedFeature} onLayerPathChange={updateSelectedFeatureLayerPath} />
 
         <FeatureList features={features.features} selectedFeatureId={selectedFeatureId} onSelect={(id) => {
           setSelectedFeatureId(id);
@@ -531,7 +735,15 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function SelectedFeatureEditor({ feature, onRename }: { feature: MeasurementFeature | null; onRename: (name: string) => void }) {
+function SelectedFeatureEditor({
+  feature,
+  onRename,
+  onLayerPathChange
+}: {
+  feature: MeasurementFeature | null;
+  onRename: (name: string) => void;
+  onLayerPathChange: (layerPath: string) => void;
+}) {
   if (!feature) {
     return (
       <section className="selected-empty">
@@ -548,6 +760,13 @@ function SelectedFeatureEditor({ feature, onRename }: { feature: MeasurementFeat
         value={feature.properties.name}
         onChange={(event) => onRename(event.target.value)}
         onBlur={(event) => onRename(event.target.value.trim() || feature.properties.name)}
+      />
+      <input
+        aria-label="Layer path"
+        value={feature.properties.layerPath ?? 'Base'}
+        onChange={(event) => onLayerPathChange(event.target.value)}
+        onBlur={(event) => onLayerPathChange(event.target.value.trim() || 'Base')}
+        placeholder="Layer path (ex: Lot/Inner Island)"
       />
       <div className="detail-grid">
         {feature.properties.measurementType === 'polygon' ? (
@@ -600,7 +819,7 @@ function FeatureList({
                 <button className={isSelected ? 'feature-row selected' : 'feature-row'} onClick={() => onSelect(id)}>
                   <span>
                     <strong>{feature.properties.name}</strong>
-                    <small>{feature.properties.measurementType}</small>
+                    <small>{feature.properties.measurementType} • {feature.properties.layerPath ?? 'Base'}</small>
                   </span>
                   <b>{primary}</b>
                 </button>
@@ -620,6 +839,25 @@ function TokenNotice() {
       <span>Add `VITE_MAPBOX_ACCESS_TOKEN` to a local `.env` file, then restart the dev server.</span>
     </div>
   );
+}
+
+function parseDimensionInput(value: string): { width: number; height: number } | null {
+  const match = value.trim().match(/^(\d+(?:\.\d+)?)\s*[xX]\s*(\d+(?:\.\d+)?)$/);
+  if (!match) {
+    return null;
+  }
+
+  const width = Number.parseFloat(match[1]);
+  const height = Number.parseFloat(match[2]);
+  if (!Number.isFinite(width) || !Number.isFinite(height)) {
+    return null;
+  }
+
+  return { width, height };
+}
+
+function feetToMeters(feet: number): number {
+  return feet * 0.3048;
 }
 
 function getTotals(features: MeasurementFeature[]) {

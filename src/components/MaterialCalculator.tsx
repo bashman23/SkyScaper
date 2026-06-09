@@ -1,7 +1,18 @@
 import { useState, useMemo } from 'react';
 import { ChevronDown } from 'lucide-react';
 
-export type MaterialType = 'asphalt' | 'sealcoat' | 'paint' | 'sod' | 'mulch' | 'roofing' | 'fencing';
+export type MaterialType =
+  | 'asphalt'
+  | 'concrete'
+  | 'sealcoat'
+  | 'paint'
+  | 'sod'
+  | 'mulch'
+  | 'roofing'
+  | 'fencing'
+  | 'tennis_resurface'
+  | 'turf_field'
+  | 'polyurethane_track';
 
 interface MaterialRate {
   name: string;
@@ -12,10 +23,16 @@ interface MaterialRate {
 
 const MATERIAL_RATES: Record<MaterialType, MaterialRate> = {
   asphalt: {
-    name: 'Asphalt (2" depth)',
+    name: 'Asphalt Paving',
+    unit: 'ton',
+    pricePerUnit: 110,
+    description: 'Hot mix asphalt quantity based on depth and density.'
+  },
+  concrete: {
+    name: 'Concrete Slab',
     unit: 'sq ft',
-    pricePerUnit: 0.15,
-    description: 'Hot mix asphalt paving'
+    pricePerUnit: 8.5,
+    description: 'Installed exterior concrete slab estimate.'
   },
   sealcoat: {
     name: 'Sealcoating',
@@ -52,6 +69,24 @@ const MATERIAL_RATES: Record<MaterialType, MaterialRate> = {
     unit: 'linear ft',
     pricePerUnit: 28,
     description: 'Installed fence per linear foot'
+  },
+  tennis_resurface: {
+    name: 'Tennis Court Resurface',
+    unit: 'sq ft',
+    pricePerUnit: 1.6,
+    description: 'Acrylic resurfacing and striping estimate.'
+  },
+  turf_field: {
+    name: 'Track & Field Turf',
+    unit: 'sq ft',
+    pricePerUnit: 7.25,
+    description: 'Synthetic turf field install estimate.'
+  },
+  polyurethane_track: {
+    name: 'Polyurethane Track',
+    unit: 'sq ft',
+    pricePerUnit: 10.5,
+    description: 'Track surfacing system estimate.'
   }
 };
 
@@ -60,7 +95,8 @@ interface MaterialCalculatorProps {
   lengthM: number;
 }
 
-const QUICK_PRESETS: MaterialType[] = ['roofing', 'fencing'];
+const QUICK_PRESETS: MaterialType[] = ['asphalt', 'roofing', 'fencing', 'concrete'];
+const ASPHALT_DENSITY_LB_PER_FT3 = 145;
 
 function isLinearMaterial(type: MaterialType): boolean {
   return type === 'paint' || type === 'fencing';
@@ -70,10 +106,17 @@ function isVolumeMaterial(type: MaterialType): boolean {
   return type === 'mulch';
 }
 
+function isAsphaltMaterial(type: MaterialType): boolean {
+  return type === 'asphalt';
+}
+
 export function MaterialCalculator({ areaSqM, lengthM }: MaterialCalculatorProps) {
   const [expanded, setExpanded] = useState(false);
   const [selectedMaterial, setSelectedMaterial] = useState<MaterialType>('asphalt');
   const [customRate, setCustomRate] = useState<number | null>(null);
+  const [asphaltDepthInches, setAsphaltDepthInches] = useState(2);
+  const [millAndPave, setMillAndPave] = useState(false);
+  const [millDepthInches, setMillDepthInches] = useState(1);
 
   const sqft = areaSqM * 10.764; // m² to sq ft
   const linearft = lengthM * 3.281; // m to ft
@@ -85,6 +128,12 @@ export function MaterialCalculator({ areaSqM, lengthM }: MaterialCalculatorProps
   const hasLength = linearft > 0;
 
   const quantity = useMemo(() => {
+    if (isAsphaltMaterial(selectedMaterial)) {
+      const effectiveDepth = Math.max(asphaltDepthInches - (millAndPave ? millDepthInches : 0), 0);
+      const volumeCubicFeet = sqft * (effectiveDepth / 12);
+      return (volumeCubicFeet * ASPHALT_DENSITY_LB_PER_FT3) / 2000;
+    }
+
     if (isLinearMaterial(selectedMaterial)) {
       return linearft;
     }
@@ -94,9 +143,13 @@ export function MaterialCalculator({ areaSqM, lengthM }: MaterialCalculatorProps
     }
 
     return sqft;
-  }, [selectedMaterial, sqft, linearft, cubicyd]);
+  }, [asphaltDepthInches, millAndPave, millDepthInches, selectedMaterial, sqft, linearft, cubicyd]);
 
   const quantityDisplay = useMemo(() => {
+    if (isAsphaltMaterial(selectedMaterial)) {
+      return `${quantity.toFixed(2)} tons`;
+    }
+
     if (isLinearMaterial(selectedMaterial)) {
       return `${quantity.toFixed(0)} linear ft`;
     }
@@ -176,6 +229,44 @@ export function MaterialCalculator({ areaSqM, lengthM }: MaterialCalculatorProps
           </div>
 
           <p className="calculator-description">{material.description}</p>
+          {isAsphaltMaterial(selectedMaterial) ? (
+            <div className="asphalt-controls">
+              <label htmlFor="asphalt-depth">Asphalt depth (inches)</label>
+              <input
+                id="asphalt-depth"
+                type="number"
+                min="0"
+                step="0.25"
+                value={asphaltDepthInches}
+                onChange={(event) => setAsphaltDepthInches(Number.parseFloat(event.target.value) || 0)}
+              />
+              <label className="checkbox-row" htmlFor="mill-and-pave">
+                <input
+                  id="mill-and-pave"
+                  type="checkbox"
+                  checked={millAndPave}
+                  onChange={(event) => setMillAndPave(event.target.checked)}
+                />
+                Mill and pave
+              </label>
+              {millAndPave ? (
+                <>
+                  <label htmlFor="mill-depth">Mill depth (inches)</label>
+                  <input
+                    id="mill-depth"
+                    type="number"
+                    min="0"
+                    step="0.25"
+                    value={millDepthInches}
+                    onChange={(event) => setMillDepthInches(Number.parseFloat(event.target.value) || 0)}
+                  />
+                </>
+              ) : null}
+              <p className="calculator-helper">
+                Effective depth: {Math.max(asphaltDepthInches - (millAndPave ? millDepthInches : 0), 0).toFixed(2)} in
+              </p>
+            </div>
+          ) : null}
           {quantityHint ? <p className="calculator-helper">{quantityHint}</p> : null}
 
           <div className="calculator-rate">

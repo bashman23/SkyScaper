@@ -92,6 +92,7 @@ export function createMeasuredCollection(features: DraftFeature[], previous: Mea
           properties: {
             id,
             name: feature.properties?.name ?? existing?.properties.name ?? defaultName,
+            layerPath: feature.properties?.layerPath ?? existing?.properties.layerPath ?? 'Base',
             measurementType,
             ...measurements,
             createdAt: feature.properties?.createdAt ?? existing?.properties.createdAt ?? now,
