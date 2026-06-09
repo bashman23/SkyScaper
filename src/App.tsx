@@ -193,53 +193,56 @@ function MeasurementApp() {
       const drawActiveMode = activeModeRef.current;
 
       if (drawActiveMode === 'cut' && cutter?.geometry?.type === 'Polygon' && drawRef.current) {
-        drawRef.current.delete(String(cutter.id ?? ''));
-
-        const polygonsToCut = featuresRef.current.features.filter((feature) => feature.geometry.type === 'Polygon');
+        const previousFeatures = featuresRef.current.features;
+        const nextDraftFeatures: DrawFeatureCollection['features'] = [];
         let changed = false;
 
-        polygonsToCut.forEach((polygonFeature) => {
-          const intersects = turf.booleanIntersects(
-            polygonFeature as unknown as Feature<Polygon | MultiPolygon>,
-            cutter as Feature<Polygon>
-          );
+        previousFeatures.forEach((feature) => {
+          if (feature.geometry.type !== 'Polygon') {
+            nextDraftFeatures.push(feature as DrawFeatureCollection['features'][number]);
+            return;
+          }
+
+          const intersects = turf.booleanIntersects(feature as unknown as Feature<Polygon | MultiPolygon>, cutter as Feature<Polygon>);
           if (!intersects) {
+            nextDraftFeatures.push(feature as DrawFeatureCollection['features'][number]);
             return;
           }
 
           changed = true;
           const differenceFeature = turf.difference(
             turf.featureCollection([
-              polygonFeature as unknown as Feature<Polygon | MultiPolygon>,
+              feature as unknown as Feature<Polygon | MultiPolygon>,
               cutter as Feature<Polygon>
             ])
           );
 
-          drawRef.current?.delete(String(polygonFeature.id));
           if (!differenceFeature) {
             return;
           }
 
           const parts = toPolygonGeometries(differenceFeature.geometry);
           parts.forEach((geometry, partIndex) => {
-            const nextId = partIndex === 0 ? String(polygonFeature.id) : crypto.randomUUID();
-            drawRef.current?.add({
-              type: 'Feature',
+            const nextId = partIndex === 0 ? String(feature.id ?? feature.properties.id) : crypto.randomUUID();
+            nextDraftFeatures.push({
+              ...feature,
               id: nextId,
               geometry,
               properties: {
-                ...polygonFeature.properties,
+                ...feature.properties,
                 id: nextId,
-                name: partIndex === 0 ? polygonFeature.properties.name : `${polygonFeature.properties.name} (part ${partIndex + 1})`,
+                name: partIndex === 0 ? feature.properties.name : `${feature.properties.name} (part ${partIndex + 1})`,
                 updatedAt: new Date().toISOString()
               }
-            } as unknown as Feature);
+            });
           });
         });
 
         if (changed) {
-          setSelectedFeatureId(null);
-          syncMeasurements();
+          const nextMeasuredCollection = createMeasuredCollection(nextDraftFeatures, previousFeatures);
+          applyMeasuredCollection(nextMeasuredCollection, true, null);
+        } else {
+          applyMeasuredCollection(cloneCollection(featuresRef.current), false, selectedFeatureIdRef.current);
         }
 
         changeDrawMode(drawRef.current, 'draw_polygon');
@@ -391,6 +394,21 @@ function MeasurementApp() {
     setFeatures(EMPTY_COLLECTION);
     updateMeasurementLabels(mapRef.current, EMPTY_COLLECTION);
     pushHistorySnapshot(EMPTY_COLLECTION);
+  };
+
+  const clearAllAreas = () => {
+    if (!drawRef.current) {
+      return;
+    }
+
+    const remaining = featuresRef.current.features.filter((feature) => feature.geometry.type !== 'Polygon');
+    const nextCollection: MeasurementCollection = {
+      type: 'FeatureCollection',
+      features: remaining
+    };
+
+    setSelectedFeatureId(null);
+    applyMeasuredCollection(nextCollection, true, null);
   };
 
   const renameSelectedFeature = (name: string) => {
@@ -790,6 +808,17 @@ function MeasurementApp() {
             <button className="action-button" onClick={redo} disabled={!canRedo} title="Redo (Ctrl+Y)">
               <Redo2 size={16} aria-hidden="true" />
               Redo
+            </button>
+          </div>
+
+          <div className="history-row">
+            <button className="action-button" onClick={clearAllAreas} disabled={features.features.every((feature) => feature.geometry.type !== 'Polygon')} title="Remove all areas">
+              <Trash2 size={16} aria-hidden="true" />
+              Remove Areas
+            </button>
+            <button className="action-button" onClick={clearAllFeatures} disabled={features.features.length === 0} title="Clear all selections">
+              <Eraser size={16} aria-hidden="true" />
+              Clear All
             </button>
           </div>
 
