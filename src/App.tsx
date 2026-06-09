@@ -36,6 +36,9 @@ type DrawMode = 'simple_select' | 'draw_polygon' | 'draw_line_string' | 'freehan
 const LABEL_SOURCE_ID = 'measurement-labels';
 const LABEL_HALO_LAYER_ID = 'measurement-label-halos';
 const LABEL_LAYER_ID = 'measurement-label-text';
+const FREEHAND_PREVIEW_SOURCE_ID = 'freehand-preview';
+const FREEHAND_PREVIEW_FILL_LAYER_ID = 'freehand-preview-fill';
+const FREEHAND_PREVIEW_LINE_LAYER_ID = 'freehand-preview-line';
 const MAX_HISTORY_SIZE = 75;
 
 const EMPTY_COLLECTION: MeasurementCollection = {
@@ -234,6 +237,7 @@ function MeasurementApp() {
     };
 
     map.on('load', () => {
+      addFreehandPreviewLayers(map);
       addMeasurementLabelLayers(map);
       if (initialProject.features.features.length > 0) {
         draw.set(initialProject.features as unknown as FeatureCollection);
@@ -489,6 +493,7 @@ function MeasurementApp() {
       freehandDrawingRef.current = true;
       setIsFreehandDrawing(true);
       freehandPointsRef.current = [[event.lngLat.lng, event.lngLat.lat]];
+      updateFreehandPreview(map, freehandPointsRef.current);
       map.dragPan.disable();
     };
 
@@ -498,6 +503,7 @@ function MeasurementApp() {
       }
 
       freehandPointsRef.current.push([event.lngLat.lng, event.lngLat.lat]);
+      updateFreehandPreview(map, freehandPointsRef.current);
     };
 
     const completeFreehand = () => {
@@ -510,15 +516,15 @@ function MeasurementApp() {
       map.dragPan.enable();
       const points = freehandPointsRef.current;
       freehandPointsRef.current = [];
+      clearFreehandPreview(map);
 
       if (points.length < 3) {
         return;
       }
 
-      const first = points[0];
-      const last = points[points.length - 1];
-      if (first[0] !== last[0] || first[1] !== last[1]) {
-        points.push([first[0], first[1]]);
+      const simplifiedRing = simplifyFreehandRing(points, 42);
+      if (simplifiedRing.length < 4) {
+        return;
       }
 
       const featureId = crypto.randomUUID();
@@ -532,13 +538,13 @@ function MeasurementApp() {
         },
         geometry: {
           type: 'Polygon',
-          coordinates: [points]
+          coordinates: [simplifiedRing]
         }
       } as unknown as Feature);
 
-      setSelectedFeatureId(featureId);
+      setSelectedFeatureId(null);
       setActiveMode('simple_select');
-      changeDrawMode(draw, 'simple_select', { featureIds: [featureId] });
+      changeDrawMode(draw, 'simple_select');
       syncMeasurementsFromDraw(true);
     };
 
@@ -554,6 +560,7 @@ function MeasurementApp() {
       map.off('mousemove', handleMouseMove);
       map.off('mouseup', completeFreehand);
       map.off('mouseout', completeFreehand);
+      clearFreehandPreview(map);
       freehandDrawingRef.current = false;
       setIsFreehandDrawing(false);
       freehandPointsRef.current = [];
@@ -1059,6 +1066,96 @@ function addMeasurementLabelLayers(map: mapboxgl.Map): void {
   });
 }
 
+function addFreehandPreviewLayers(map: mapboxgl.Map): void {
+  if (!map.getSource(FREEHAND_PREVIEW_SOURCE_ID)) {
+    map.addSource(FREEHAND_PREVIEW_SOURCE_ID, {
+      type: 'geojson',
+      data: emptyFreehandPreview()
+    });
+  }
+
+  if (!map.getLayer(FREEHAND_PREVIEW_FILL_LAYER_ID)) {
+    map.addLayer({
+      id: FREEHAND_PREVIEW_FILL_LAYER_ID,
+      type: 'fill',
+      source: FREEHAND_PREVIEW_SOURCE_ID,
+      filter: ['==', '$type', 'Polygon'],
+      paint: {
+        'fill-color': '#0ea5e9',
+        'fill-opacity': 0.18
+      }
+    });
+  }
+
+  if (!map.getLayer(FREEHAND_PREVIEW_LINE_LAYER_ID)) {
+    map.addLayer({
+      id: FREEHAND_PREVIEW_LINE_LAYER_ID,
+      type: 'line',
+      source: FREEHAND_PREVIEW_SOURCE_ID,
+      paint: {
+        'line-color': '#0ea5e9',
+        'line-width': 2.5
+      }
+    });
+  }
+}
+
+function updateFreehandPreview(map: mapboxgl.Map, points: Array<[number, number]>): void {
+  const source = map.getSource(FREEHAND_PREVIEW_SOURCE_ID);
+  if (!source || !('setData' in source)) {
+    return;
+  }
+
+  if (points.length === 0) {
+    source.setData(emptyFreehandPreview());
+    return;
+  }
+
+  const previewFeatures: Array<Feature<Geometry>> = [
+    {
+      type: 'Feature',
+      properties: {},
+      geometry: {
+        type: 'LineString',
+        coordinates: points
+      }
+    }
+  ];
+
+  if (points.length >= 3) {
+    const ring = closeRing(points);
+    previewFeatures.push({
+      type: 'Feature',
+      properties: {},
+      geometry: {
+        type: 'Polygon',
+        coordinates: [ring]
+      }
+    });
+  }
+
+  source.setData({
+    type: 'FeatureCollection',
+    features: previewFeatures
+  } as FeatureCollection<Geometry>);
+}
+
+function clearFreehandPreview(map: mapboxgl.Map): void {
+  const source = map.getSource(FREEHAND_PREVIEW_SOURCE_ID);
+  if (!source || !('setData' in source)) {
+    return;
+  }
+
+  source.setData(emptyFreehandPreview());
+}
+
+function emptyFreehandPreview(): FeatureCollection<Geometry> {
+  return {
+    type: 'FeatureCollection',
+    features: []
+  };
+}
+
 function updateMeasurementLabels(map: mapboxgl.Map | null, collection: MeasurementCollection): void {
   const source = map?.getSource(LABEL_SOURCE_ID);
   if (!source || !('setData' in source)) {
@@ -1074,6 +1171,41 @@ function changeDrawMode(draw: MapboxDraw | null, mode: DrawMode, options?: unkno
   }
 
   (draw.changeMode as (modeName: string, modeOptions?: unknown) => void)(mode, options);
+}
+
+function simplifyFreehandRing(points: Array<[number, number]>, maxVertices: number): Array<[number, number]> {
+  const ring = closeRing(points);
+  if (ring.length <= maxVertices) {
+    return ring;
+  }
+
+  const first = ring[0];
+  const last = ring[ring.length - 1];
+  const inner = ring.slice(1, -1);
+  const sampleCount = Math.max(maxVertices - 2, 2);
+  const stride = inner.length / sampleCount;
+  const sampled: Array<[number, number]> = [];
+
+  for (let index = 0; index < sampleCount; index += 1) {
+    const sourceIndex = Math.min(Math.floor(index * stride), inner.length - 1);
+    sampled.push(inner[sourceIndex]);
+  }
+
+  return [first, ...sampled, last];
+}
+
+function closeRing(points: Array<[number, number]>): Array<[number, number]> {
+  if (points.length === 0) {
+    return [];
+  }
+
+  const first = points[0];
+  const last = points[points.length - 1];
+  if (first[0] === last[0] && first[1] === last[1]) {
+    return [...points];
+  }
+
+  return [...points, [first[0], first[1]]];
 }
 
 function getDrawStyles() {
